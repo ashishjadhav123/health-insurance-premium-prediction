@@ -2,14 +2,17 @@ import pandas as pd
 import joblib
 
 # Load models and preprocessors
-model_young = joblib.load(
-    r"D:\AI-engineer Study\Projects\Project 7 Premium Prediction ver1\research\models\model_young.joblib")
-model_rest = joblib.load(
-    r"D:\AI-engineer Study\Projects\Project 7 Premium Prediction ver1\research\models\model_rest.joblib")
-preprocessor_young = joblib.load(
-    r"D:\AI-engineer Study\Projects\Project 7 Premium Prediction ver1\research\models\preprocessor_young.joblib")
-preprocessor_rest = joblib.load(
-    r"D:\AI-engineer Study\Projects\Project 7 Premium Prediction ver1\research\models\preprocessor_rest.joblib")
+# 1. Base directory of the current file (frontend/)
+CURRENT_DIR = Path(__file__).resolve().parent
+
+# 2. Navigate up to the project root and into the models folder
+MODELS_DIR = CURRENT_DIR.parent / "research" / "models"
+
+# 3. Load artifacts dynamically
+model_young = joblib.load(MODELS_DIR / "model_young.joblib")
+model_rest = joblib.load(MODELS_DIR / "model_rest.joblib")
+preprocessor_young = joblib.load(MODELS_DIR / "preprocessor_young.joblib")
+preprocessor_rest = joblib.load(MODELS_DIR / "preprocessor_rest.joblib")
 
 
 def calculate_total_risk_score(medical_history):
