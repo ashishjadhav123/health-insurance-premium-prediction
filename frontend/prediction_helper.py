@@ -1,23 +1,26 @@
-import pandas as pd
 import joblib
+import pandas as pd
 from pathlib import Path
 
-# Load models and preprocessors
-# 1. Base directory of the current file (frontend/)
+# -------------------------------------------------------------------------
+# 1. Dynamic Path Resolution (Works locally on Windows & on Streamlit Cloud)
+# -------------------------------------------------------------------------
 CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent
+MODELS_DIR = PROJECT_ROOT / "research" / "models"
 
-# 2. Navigate up to the project root and into the models folder
-MODELS_DIR = CURRENT_DIR.parent / "research" / "models"
-
-# 3. Load artifacts dynamically
+# Load models and column preprocessors
 model_young = joblib.load(MODELS_DIR / "model_young.joblib")
 model_rest = joblib.load(MODELS_DIR / "model_rest.joblib")
 preprocessor_young = joblib.load(MODELS_DIR / "preprocessor_young.joblib")
 preprocessor_rest = joblib.load(MODELS_DIR / "preprocessor_rest.joblib")
 
 
-def calculate_total_risk_score(medical_history):
-    """Calculates the raw total risk score based on medical history."""
+# -------------------------------------------------------------------------
+# 2. Risk Score Calculation Logic
+# -------------------------------------------------------------------------
+def calculate_total_risk_score(medical_history: str) -> int:
+    """Calculates total risk score based on medical history conditions."""
     risk_scores = {
         "diabetes": 6,
         "heart disease": 8,
@@ -27,57 +30,85 @@ def calculate_total_risk_score(medical_history):
         "none": 0
     }
 
-    # Split composite string and sum scores
+    if not medical_history:
+        return 0
+
     diseases = str(medical_history).lower().split(" & ")
-    return sum(risk_scores.get(disease.strip(), 0) for disease in diseases)
+    return sum(risk_scores.get(d.strip(), 0) for d in diseases)
 
 
-def preprocess_input(input_dict):
-    """Formats raw user input and processes it through the saved ColumnTransformer."""
-    # 1. Map UI input dictionary keys to the column names expected by the ColumnTransformer
+# -------------------------------------------------------------------------
+# 3. Dynamic Preprocessing & Feature Alignment
+# -------------------------------------------------------------------------
+def preprocess_input(input_dict: dict) -> pd.DataFrame:
+    """Converts user input dictionary to a DataFrame and runs it through
+
+    the fitted ColumnTransformer without missing column errors.
+    """
+    age = input_dict.get('Age', 30)
+    medical_history = input_dict.get('Medical History', 'none')
+
+    # Select preprocessor based on age segment
+    preprocessor = preprocessor_young if age <= 25 else preprocessor_rest
+
+    # Base feature dictionary mapped from UI keys
     raw_record = {
-        'age': input_dict['Age'],
-        'gender': input_dict['Gender'],
-        'region': input_dict['Region'],
-        'marital_status': input_dict['Marital Status'],
-        'bmi_category': input_dict['BMI Category'],
-        'smoking_status': input_dict['Smoking Status'],
-        'employment_status': input_dict['Employment Status'],
-        'insurance_plan': input_dict['Insurance Plan'],
-        'income_level': input_dict.get('Income Level', '<10L'),  # Placeholder if preprocessor requires column
-        'number_of_dependants': input_dict['Number of Dependants'],
-        'income_lakhs': input_dict['Income in Lakhs'],
-        'total_risk_score': calculate_total_risk_score(input_dict['Medical History'])
+        'age': age,
+        'gender': input_dict.get('Gender', 'Male'),
+        'region': input_dict.get('Region', 'Northwest'),
+        'marital_status': input_dict.get('Marital Status', 'Unmarried'),
+        'bmi_category': input_dict.get('BMI Category', 'Normal'),
+        'smoking_status': input_dict.get('Smoking Status', 'No'),
+        'employment_status': input_dict.get('Employment Status', 'Salaried'),
+        'insurance_plan': input_dict.get('Insurance Plan', 'Bronze'),
+        'income_level': input_dict.get('Income Level', '<10L'),
+        'number_of_dependants': input_dict.get('Number of Dependants', 0),
+        'income_lakhs': input_dict.get('Income in Lakhs', 10),
+        'total_risk_score': calculate_total_risk_score(medical_history),
+        'genetical_risk': input_dict.get('Genetical Risk', 0),
+        'medical_history': medical_history,
+        'disease1': 'none',
+        'disease2': 'none'
     }
 
-    # Convert single input dictionary into a 1-row DataFrame
     raw_df = pd.DataFrame([raw_record])
 
-    # 2. Select the appropriate preprocessor based on age
-    preprocessor = preprocessor_young if input_dict['Age'] <= 25 else preprocessor_rest
+    # Dynamically inject and align all columns expected by the fitted ColumnTransformer
+    if hasattr(preprocessor, "feature_names_in_"):
+        for col in preprocessor.feature_names_in_:
+            if col not in raw_df.columns:
+                raw_df[col] = 0
+        raw_df = raw_df[list(preprocessor.feature_names_in_)]
 
-    # 3. Transform data using the fitted ColumnTransformer
+    # Transform through the pipeline
     transformed = preprocessor.transform(raw_df)
 
-    # Convert back to DataFrame if transformer outputs a numpy array
+    # Convert to DataFrame if output is a NumPy array
     if not isinstance(transformed, pd.DataFrame):
-        feature_names = preprocessor.get_feature_names_out()
+        try:
+            feature_names = preprocessor.get_feature_names_out()
+        except Exception:
+            feature_names = None
         transformed = pd.DataFrame(transformed, columns=feature_names)
 
-    # 4. Drop income_level if it was dropped prior to model training
+    # Clean up redundant features if they were dropped prior to model fitting
     if 'income_level' in transformed.columns:
         transformed = transformed.drop(columns=['income_level'])
 
     return transformed
 
 
-def predict(input_dict):
-    """Generates the insurance premium prediction."""
+# -------------------------------------------------------------------------
+# 4. Premium Prediction
+# -------------------------------------------------------------------------
+def predict(input_dict: dict) -> int:
+    """Predicts the annual health insurance premium."""
     processed_df = preprocess_input(input_dict)
+    age = input_dict.get('Age', 30)
 
-    if input_dict['Age'] <= 25:
+    if age <= 25:
         prediction = model_young.predict(processed_df)
     else:
         prediction = model_rest.predict(processed_df)
 
-    return int(prediction[0])
+    return max(0, int(prediction[0]))
